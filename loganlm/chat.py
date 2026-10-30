@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import List, Optional
 
 import torch
 
-from .config import ChatConfig, LLMConfig
+from .config import ChatConfig, LLMConfig, VisionConfig
 from .tokenizer import BPETokenizer, EOS
 from .model.llm import LoganLM
 from .data.corpus import SYSTEM_PROMPT, EMOTION_PROMPTS
@@ -31,6 +32,7 @@ from .memory import MemoryStore
 from .nlu import detect_intent, try_eval, normalize_emotion
 from .nlu.emotions import detect_emotion_request
 from .tools.web import get_now_str, get_weather, web_search
+from .vision.data import to_tensor, COLOR_RGB, COLORS, SHAPES, POSITIONS
 
 DEFAULT_CKPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "checkpoints", "demo")
@@ -61,8 +63,31 @@ class ChatSession:
         torch.set_num_threads(max(1, os.cpu_count() or 1))
         self.emotion = self.memory.get_emotion(session_id)
 
+        # ── 视觉能力（若存在 vit.pt + bridge.pt 则自动启用识图）──
+        self.vit = None
+        self.bridge = None
+        self.vmeta: dict = {"colors": COLORS, "shapes": SHAPES, "positions": POSITIONS}
+        vp, bp = os.path.join(ckpt_dir, "vit.pt"), os.path.join(ckpt_dir, "bridge.pt")
+        if os.path.exists(vp) and os.path.exists(bp):
+            from .vision import ViT, VisionBridge
+            vd = torch.load(vp, map_location="cpu", weights_only=False)
+            self.vit = ViT(VisionConfig(**vd["config"]))
+            self.vit.load_state_dict(vd["vit"])
+            self.vit.eval()
+            bd = torch.load(bp, map_location="cpu", weights_only=False)
+            self.bridge = VisionBridge(vision_dim=vd["config"]["dim"], llm_dim=cfg.dim,
+                                       num_query_tokens=bd["num_query_tokens"])
+            self.bridge.load_state_dict(bd["bridge"])
+            self.bridge.eval()
+            try:
+                with open(os.path.join(ckpt_dir, "vision_meta.json"), encoding="utf-8") as f:
+                    self.vmeta.update(json.load(f))
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
-    def _generate(self, user: str, extra_context: str = "") -> str:
+    def _generate(self, user: str, extra_context: str = "",
+                  prefix_embeds: Optional[torch.Tensor] = None) -> str:
         history = self.memory.get_history(self.session_id,
                                           limit=self.ccfg.max_history_turns)
         system = SYSTEM_PROMPT + EMOTION_PROMPTS.get(self.emotion, "")
@@ -79,16 +104,87 @@ class ChatSession:
             top_p=self.ccfg.top_p,
             repetition_penalty=self.ccfg.repetition_penalty,
             eos_id=EOS,
+            prefix_embeds=prefix_embeds,
         )
         reply = self.tok.decode(out[0, len(ids):].tolist()).strip()
         return reply or "（我走神了，再说一遍好不好？）"
 
     # ------------------------------------------------------------------
-    def reply(self, text: str) -> dict:
-        """处理一条用户消息，返回 {reply, tool, sources}。"""
+    @staticmethod
+    def load_image_tensor(path: str, size: int = 64) -> "torch.Tensor":
+        from PIL import Image as PILImage
+        img = PILImage.open(path).convert("RGB").resize((size, size))
+        return to_tensor(img)
+
+    def _describe_real_photo(self, px, colors: List[str]) -> str:
+        """非合成图兑底：亮度 + 主色调的经典 CV 描述。"""
+        mean = px.mean(dim=(1, 2))
+        rgb = [float(v) for v in (mean * 0.5 + 0.5) * 255]
+        bright = sum(rgb) / 3
+        best, dist = 0, 1e18
+        for i, (r, g, b) in enumerate(COLOR_RGB):
+            d = (rgb[0] - r) ** 2 + (rgb[1] - g) ** 2 + (rgb[2] - b) ** 2
+            if d < dist:
+                dist, best = d, i
+        tone = "偏亮" if bright > 150 else ("偏暗" if bright < 80 else "适中")
+        return (f"我看到一张图片：整体{tone}（平均亮度 {bright:.0f}/255），"
+                f"主色调接近{colors[best]}。说实话，复杂照片的精细识别我还在进化中，"
+                f"图形题我最有把握，你可以画一张试试！")
+
+    def _reply_image(self, ask: str, path: str) -> dict:
+        """识图：ViT + 桥接软 token → 看图说话；非合成图用经典 CV 兑底。"""
+        if self.vit is None or self.bridge is None:
+            return {"reply": "这个模型还没训练视觉能力，先运行 python scripts/train_vision.py 哦！",
+                    "tool": "image", "sources": []}
+        try:
+            px = self.load_image_tensor(path).unsqueeze(0)
+        except Exception as e:
+            return {"reply": f"图片打不开：{e}", "tool": "image", "sources": []}
+        with torch.no_grad():
+            lc, ls, lp, feats = self.vit(px)
+            pre = self.bridge(feats)
+        conf = min(float(lc.softmax(-1).max()), float(ls.softmax(-1).max()),
+                   float(lp.softmax(-1).max()))
+        colors, shapes, positions = (self.vmeta["colors"], self.vmeta["shapes"],
+                                     self.vmeta["positions"])
+        if conf < 0.45:  # 不太像训练里的合成图 → 兑底描述
+            reply = self._describe_real_photo(px[0], colors)
+        else:
+            # 识图提示词不带历史（就图论图），贪心解码保证稳定
+            system = SYSTEM_PROMPT + EMOTION_PROMPTS.get(self.emotion, "")
+            prompt = f"<bos><sys>{system}<user><img></img>{ask}<assistant>"
+            ids = self.tok.encode(prompt)
+            out = self.model.generate(
+                torch.tensor([ids], dtype=torch.long),
+                max_new_tokens=48, temperature=0.0,  # 描述类回答用贪心，稳定不飘
+                repetition_penalty=1.05, eos_id=EOS, prefix_embeds=pre)
+            reply = self.tok.decode(out[0, len(ids):].tolist()).strip()
+            c, s, p = int(lc[0].argmax()), int(ls[0].argmax()), int(lp[0].argmax())
+            # 正确性校验：生成结果要和视觉分类头对得上，否则用分类结果组句兜底
+            if (not reply or colors[c] not in reply
+                    or shapes[s] not in reply or positions[p] not in reply):
+                reply = f"这张图片里有一个{colors[c]}的{shapes[s]}，它在{positions[p]}。"
+        self.memory.add_turn(self.session_id, f"[图片] {ask}", reply)
+        return {"reply": reply, "tool": "image", "sources": []}
+
+    # ------------------------------------------------------------------
+    def reply(self, text: str, image_path: Optional[str] = None) -> dict:
+        """处理一条用户消息（可带图片路径），返回 {reply, tool, sources}。"""
         text = (text or "").strip()
-        if not text:
+
+        # 文本里若带了图片路径，自动提取（CLI 用户可以直接粘贴路径）
+        if image_path is None and text:
+            m = re.search(r"[^\s]+\.(?:png|jpe?g|gif|bmp|webp)", text, re.I)
+            if m and os.path.exists(m.group(0)):
+                image_path = m.group(0)
+                text = (text.replace(image_path, "").strip()
+                        or "看看这张图，描述一下")
+
+        if not text and not image_path:
             return {"reply": "想说什么呀？", "tool": "chat", "sources": []}
+
+        if image_path:
+            return self._reply_image(text or "看看这张图，描述一下", image_path)
 
         intent = detect_intent(text)
 

@@ -180,26 +180,43 @@ class LoganLM(nn.Module):
             n -= self.tok_emb.weight.numel()
         return n
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None):
-        """idx: (B, T) 的 token id；targets: (B, T)，pad 处填 -100 表示不算 loss。"""
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None,
+                prefix_embeds: Optional[torch.Tensor] = None):
+        """idx: (B, T) 的 token id；targets: (B, T)，pad 处填 -100 表示不算 loss。
+
+        prefix_embeds: (B, Q, D) —— 图像软 token，作为前缀拼在文本 embedding 之前
+        （多模态入口，见 vision/bridge.py）。位置编码 Q+T 也一并覆盖。
+        """
         B, T = idx.shape
-        T = min(T, self.cfg.max_seq_len)
-        idx = idx[:, -T:]
+        Q = prefix_embeds.shape[1] if prefix_embeds is not None else 0
+        if Q + T > self.cfg.max_seq_len:  # 空间不够：优先保留末尾的文本
+            keep = self.cfg.max_seq_len - Q
+            idx = idx[:, -keep:]
+            if targets is not None:
+                targets = targets[:, -keep:]
+            T = idx.shape[1]
 
         x = self.tok_emb(idx)
+        if prefix_embeds is not None:
+            x = torch.cat([prefix_embeds.to(x.dtype), x], dim=1)
+            if targets is not None:
+                pad = torch.full((B, Q), -100, dtype=targets.dtype, device=targets.device)
+                targets = torch.cat([pad, targets], dim=1)
+
+        Tt = Q + T
         mask = None
-        if T > 1:
-            mask = torch.triu(torch.full((T, T), float("-inf"), device=idx.device), diagonal=1)
+        if Tt > 1:
+            mask = torch.triu(torch.full((Tt, Tt), float("-inf"), device=idx.device), diagonal=1)
 
         for layer in self.layers:
-            x = layer(x, self.rope_cos[:T], self.rope_sin[:T], mask)
+            x = layer(x, self.rope_cos[:Tt], self.rope_sin[:Tt], mask)
 
         x = self.norm(x)
         logits = self.lm_head(x)
 
         loss = None
         if targets is not None:
-            targets = targets[:, -T:]
+            # targets 已与 (Q+T) 对齐：前 Q 位是 -100（图像软 token 不计 loss）
             loss = F.cross_entropy(
                 logits.reshape(-1, logits.size(-1)),
                 targets.reshape(-1),
@@ -214,12 +231,19 @@ class LoganLM(nn.Module):
     def generate(self, idx: torch.Tensor, max_new_tokens: int = 64,
                  temperature: float = 0.85, top_k: int = 40, top_p: float = 0.92,
                  repetition_penalty: float = 1.15,
-                 eos_id: Optional[int] = None) -> torch.Tensor:
-        """从 idx 开始自回归生成，遇到 eos_id 或达到上限就停。"""
+                 eos_id: Optional[int] = None,
+                 prefix_embeds: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """从 idx 开始自回归生成，遇到 eos_id 或达到上限就停。
+
+        prefix_embeds: (B, Q, D) 图像软 token（可选），每一 Token 都会携带。
+        """
         out = idx
         recent: List[int] = []
+        Q = prefix_embeds.shape[1] if prefix_embeds is not None else 0
         for _ in range(max_new_tokens):
-            logits, _ = self(out[:, -self.cfg.max_seq_len:])
+            keep = self.cfg.max_seq_len - Q
+            idx_in = out[:, -keep:] if Q else out[:, -self.cfg.max_seq_len:]
+            logits, _ = self(idx_in, prefix_embeds=prefix_embeds)
             nxt = sample_next(
                 logits[0, -1],
                 temperature=temperature,

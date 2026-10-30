@@ -40,14 +40,19 @@ class ChatDataset:
 
     system_prompts 传列表时，同一对话会以每种系统提示各生成一条样本
     （情绪模式数据增强：切情绪不降智）。
+
+    image_pairs: 看图说话样本列表，每项 {"text": 用户问（含<img></img>标记），
+    "answer": 描述，"img": (3,H,W) 张量} —— 用于多模态混合训练。
     """
 
     def __init__(self, tokenizer: BPETokenizer, dialog_pairs: List[Tuple[str, str]],
-                 system_prompts=SYSTEM_PROMPT, seq_len: int = 256) -> None:
+                 system_prompts=SYSTEM_PROMPT, seq_len: int = 256,
+                 image_pairs=None) -> None:
         if isinstance(system_prompts, str):
             system_prompts = [system_prompts]
         self.seq_len = seq_len
-        self.examples: List[Tuple[List[int], List[int]]] = []
+        self.text_examples: List[Tuple[List[int], List[int]]] = []
+        self.image_examples: List[Tuple[List[int], List[int], "torch.Tensor"]] = []
         skipped = 0
         for system in system_prompts:
             for user, assistant in dialog_pairs:
@@ -58,7 +63,19 @@ class ChatDataset:
                 if len(ids) < 8:
                     skipped += 1
                     continue
-                self.examples.append(self._make(ids))
+                self.text_examples.append(self._make(ids))
+        if image_pairs:
+            system = system_prompts[0]
+            for p in image_pairs:
+                text = render_example(system, p["text"], p["answer"])
+                ids = tokenizer.encode(text)
+                if len(ids) > seq_len:
+                    ids = ids[:seq_len]
+                if len(ids) < 8:
+                    skipped += 1
+                    continue
+                ids, labels = self._make(ids)
+                self.image_examples.append((ids, labels, p["img"]))
         if skipped:
             print(f"  数据集：跳过 {skipped} 条异常样本")
 
@@ -77,21 +94,31 @@ class ChatDataset:
         return ids, labels
 
     def __len__(self) -> int:
-        return len(self.examples)
+        return len(self.text_examples) + len(self.image_examples)
 
-    def sample_batch(self, batch_size: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """随机抽一个 batch，动态 padding 到批内最长（省算力）。"""
-        n = len(self.examples)
+    def sample_batch(self, batch_size: int, image: bool = False):
+        """随机抽一个 batch，动态 padding 到批内最长（省算力）。
+
+        image=True 时从看图样本池采样，返回 (x, y, imgs)；
+        否则返回 (x, y, None)。imgs: (B,3,H,W) 或 None。
+        """
+        use_img = image and len(self.image_examples) > 0
+        pool = self.image_examples if use_img else self.text_examples
+        n = len(pool)
         idxs = random.sample(range(n), min(batch_size, n))
-        batch = [self.examples[i] for i in idxs]
+        batch = [pool[i] for i in idxs]
         L = max(len(ids) for ids, _ in batch)
         x = torch.full((len(batch), L), PAD, dtype=torch.long)
         y = torch.full((len(batch), L), -100, dtype=torch.long)
-        for b, (ids, labels) in enumerate(batch):
+        for b, item in enumerate(batch):
+            ids, labels = item[0], item[1]
             m = len(ids)
             x[b, :m] = torch.tensor(ids, dtype=torch.long)
             y[b, :m] = torch.tensor(labels, dtype=torch.long)
-        return x, y
+        if use_img:
+            imgs = torch.stack([item[2] for item in batch])
+            return x, y, imgs
+        return x, y, None
 
 
 if __name__ == "__main__":
@@ -101,7 +128,7 @@ if __name__ == "__main__":
     tok = BPETokenizer().train("\n".join(u + a for u, a in DIALOGS), vocab_size=1024)
     ds = ChatDataset(tok, DIALOGS, seq_len=256)
     print("样本数:", len(ds), "| 分词器词表:", tok.vocab_size)
-    x, y = ds.sample_batch(4)
+    x, y, _ = ds.sample_batch(4)
     print("batch 形状:", tuple(x.shape),
           "| 可训练位置:", int((y != -100).sum()), "/", int(y.numel()))
     print("数据管线自测通过 ✅")

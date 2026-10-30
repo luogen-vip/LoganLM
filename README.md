@@ -30,6 +30,7 @@ LoganLM 是一个**完全从零开始**实现的 AI 大模型系统：不使用�
 | 🕐 时间感知 | 今天几号、星期几、几点 |
 | 🧮 数学引擎 | 算术题直接算（白名单校验，安全求值） |
 | 🎭 情绪引擎 | "切换毒舌/开心/温柔/自然模式"，同一个大脑不同的味道 |
+| 🖼 识图 | 从0手写 ViT + Perceiver 桥接：看合成图说话（颜色×形状×位置，实测准确率高），真实照片有亮度/主色调兑底 |
 | 🖥 命令行聊天 | `python chat.py`，交互 + 管道两种模式 |
 | 🌐 网页聊天 | `python webui.py`，零依赖起一个聊天网站 |
 
@@ -42,6 +43,9 @@ pip install -r requirements.txt
 # 2) 训练演示模型（CPU 约 2 分钟；仓库已附带训好的 checkpoints/demo，可跳过）
 python scripts/train_demo.py
 
+# 2.5) 训练视觉能力：看图说话（CPU 约 4 分钟；仓库已附带训好的权重，可跳过）
+python scripts/train_vision.py
+
 # 3a) 命令行聊天
 python chat.py
 
@@ -53,6 +57,7 @@ python webui.py
 
 ```text
 你好 / 你是谁 / 讲个笑话          ← 模型回答
+发一张图片（CLI 直接粘路径，网页点 🖼 按钮） ← 看图说话
 现在几点了 / 今天几号             ← 时间工具
 查北京天气 / 上海气温怎么样       ← 天气工具
 23*7+15等于几 / (3+5)×2           ← 数学引擎
@@ -90,7 +95,10 @@ LoganLM/
 ├── loganlm/
 │   ├── config.py           # 全局配置中心（LLM/Vision/多模态/训练/聊天）
 │   ├── tokenizer/bpe.py    # 从0手写 Byte-level BPE（训练+编解码+特殊token）
-│   ├── model/llm.py        # 从0手写 Transformer：RMSNorm/RoPE/GQA/SwiGLU/权重共享
+│   ├── model/llm.py        # 从0手写 Transformer：RMSNorm/RoPE/GQA/SwiGLU/权重共享 + 图像软token前缀
+│   ├── vision/vit.py       # 从0手写 ViT 视觉编码器（颜色/形状/位置三分类头）
+│   ├── vision/bridge.py    # Perceiver 重采样器 + MLP：视觉特征→LLM 软 token
+│   ├── vision/data.py      # 合成图教材（8色×6形×9位置，Pillow 从0画）
 │   ├── data/corpus.py      # 内置中文对话语料（130+ 组，4 种情绪增强）
 │   ├── data/dataset.py     # 数据管线（对话模板/动态padding/loss遮罩）
 │   ├── train/trainer.py    # 训练循环（AdamW+预热余弦退火+梯度裁剪）
@@ -111,6 +119,7 @@ LoganLM/
 ```bash
 python scripts/train_demo.py --steps 900              # 默认配置
 python scripts/train_demo.py --dim 256 --layers 6     # 更大的模型
+python scripts/train_vision.py --vit-steps 600        # 训练看图说话
 ```
 
 改语料就能教小罗新知识：编辑 `loganlm/data/corpus.py` 的 `DIALOGS`

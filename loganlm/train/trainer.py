@@ -62,8 +62,8 @@ class Trainer:
             lr = self.get_lr(step)
             for g in self.opt.param_groups:
                 g["lr"] = lr
-            x, y = dataset.sample_batch(self.cfg.batch_size)
-            x, y = x.to(self.device), y.to(self.device)
+            batch = dataset.sample_batch(self.cfg.batch_size)
+            x, y = batch[0].to(self.device), batch[1].to(self.device)
             _, loss = self.model(x, y)
             self.opt.zero_grad(set_to_none=True)
             loss.backward()

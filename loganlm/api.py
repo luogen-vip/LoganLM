@@ -27,6 +27,7 @@ import sys
 def main() -> int:
     ap = argparse.ArgumentParser(description="LoganLM JSON API")
     ap.add_argument("--message", "-m", default="", help="用户消息")
+    ap.add_argument("--image", default=None, help="图片路径（可选，识图模式）")
     ap.add_argument("--session", default="default", help="会话 ID（同名会话共享记忆）")
     ap.add_argument("--ckpt", default=None, help="模型目录")
     ap.add_argument("--emotion", default=None, help="直接设置情绪")
@@ -52,11 +53,11 @@ def main() -> int:
             return 0
         if args.emotion:
             s.emotion = s.emotion  # noqa 占位，真实设置在 reply 流程里
-        if not args.message:
-            print(json.dumps({"ok": False, "error": "缺少 --message"},
+        if not args.message and not args.image:
+            print(json.dumps({"ok": False, "error": "缺少 --message 或 --image"},
                              ensure_ascii=False))
             return 1
-        r = s.reply(args.message)
+        r = s.reply(args.message, image_path=args.image)
         print(json.dumps({"ok": True, **r}, ensure_ascii=False))
         return 0
     except Exception as e:  # 网站侧需要稳定 JSON，永不抛裸异常

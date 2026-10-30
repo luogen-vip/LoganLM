@@ -42,7 +42,7 @@ cfg = LLMConfig(vocab_size=tok.vocab_size, dim=64, n_layers=2, n_heads=4,
                 n_kv_heads=2, ffn_hidden=176, max_seq_len=128)
 model = LoganLM(cfg)
 ds = ChatDataset(tok, DIALOGS[:40], SYSTEM_PROMPT, seq_len=128)
-x, y = ds.sample_batch(4)
+x, y, _ = ds.sample_batch(4)
 logits, loss = model(x, y)
 assert loss is not None and torch.isfinite(loss.detach()), "loss 非有限值"
 print(f"    {model.num_params()} 参数 | batch {tuple(x.shape)} | loss {float(loss.detach()):.3f} ✅")
