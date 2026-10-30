@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# 训练产物（演示权重保留在仓库里，训练中间产物忽略）
+checkpoints/*.tmp
+checkpoints/*.bak
+wandb/
+runs/
+
+# 系统 / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# 临时文件
+*.log
+/tmp/
+demo_*.png

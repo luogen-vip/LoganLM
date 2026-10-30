@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- 移动端自适应视口；viewport-fit=cover 兼容刘海屏安全区 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<!-- 固定浅色配色，避免系统深色模式把页面自动反色 -->
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#FFFFFF">
+<title>LoganLM · 小罗</title>
+<!-- 离线可用：图标用 data URI 内联 SVG（渐变圆 + 字母 L），无任何外链 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='48' y2='48' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0' stop-color='%234F8CFF'/%3E%3Cstop offset='1' stop-color='%238E6FFF'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='24' cy='24' r='24' fill='url(%23g)'/%3E%3Ctext x='24' y='33' text-anchor='middle' font-size='26' font-weight='700' fill='%23fff' font-family='sans-serif'%3EL%3C/text%3E%3C/svg%3E">
+<style>
+/* ==================================================================
+   LoganLM 聊天界面样式
+   设计基调：对标"豆包"的简洁明快，品牌主色渐变 #4F8CFF → #8E6FFF
+   布局：移动端优先，桌面端内容栏居中，最大 860px
+   ================================================================== */
+
+/* ---------- 设计变量 ---------- */
+:root {
+  --grad: linear-gradient(135deg, #4F8CFF 0%, #8E6FFF 100%); /* 品牌渐变 */
+  --primary: #4F8CFF;        /* 主色 */
+  --primary-2: #8E6FFF;      /* 渐变终点色 */
+  --bg: #F5F7FB;             /* 页面背景 */
+  --panel: #FFFFFF;          /* 面板/气泡底色 */
+  --text: #23272F;           /* 正文深色 */
+  --text-dim: #8A93A3;       /* 次要文字 */
+  --border: #E7EBF3;         /* 分割线/描边 */
+  --radius: 14px;            /* 气泡圆角 */
+  --shadow: 0 2px 10px rgba(31, 41, 55, .06);           /* 柔和阴影 */
+  --shadow-pop: 0 4px 14px rgba(79, 140, 255, .30);     /* 主色投影 */
+}
+
+/* ---------- 基础重置 ---------- */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  /* 系统字体栈，离线可用 */
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI",
+               Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  /* 整页纵向布局：顶栏 / 消息区 / 输入区，只有消息区滚动 */
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+/* 兼容移动端浏览器地址栏收缩（动态视口高度） */
+@supports (height: 100dvh) { body { height: 100dvh; } }
+
+button { font-family: inherit; }
+::selection { background: rgba(79, 140, 255, .22); }
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  background: rgba(255, 255, 255, .92);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  /* 顶部安全区（刘海屏） */
+  padding-top: env(safe-area-inset-top);
+}
+.topbar-inner {
+  max-width: 860px;              /* 桌面端内容栏宽 */
+  margin: 0 auto;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.brand-logo { display: grid; place-items: center; flex-shrink: 0; }
+.brand-text { min-width: 0; }
+.brand-text h1 {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: .2px;
+  line-height: 1.25;
+  /* 标题用渐变文字增强品牌感 */
+  background: var(--grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.brand-text p {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.clear-btn {
+  margin-left: auto;             /* 推到最右 */
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: #5A6474;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, transform .1s;
+}
+.clear-btn:hover { color: var(--primary); border-color: #BFD3FF; }
+.clear-btn:active { transform: scale(.96); }
+.clear-btn:disabled { opacity: .5; cursor: wait; }
+
+/* ---------- 消息区 ---------- */
+.chat {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;  /* 防止滚动穿透 */
+  scroll-behavior: smooth;       /* 平滑滚动 */
+  -webkit-overflow-scrolling: touch;
+}
+.chat::-webkit-scrollbar { width: 8px; }
+.chat::-webkit-scrollbar-thumb { background: #D9DFEA; border-radius: 8px; }
+.chat::-webkit-scrollbar-track { background: transparent; }
+.chat-inner {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 16px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 单条消息行 */
+.msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  /* 气泡淡入上移动效 */
+  animation: rise .2s ease both;
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.msg.user { justify-content: flex-end; }
+
+/* 助手头像（Logo 小图） */
+.avatar { flex-shrink: 0; margin-top: 2px; line-height: 0; }
+
+/* 气泡通用 */
+.bubble {
+  max-width: min(calc(100% - 44px), 620px);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 15px;
+  line-height: 1.65;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.msg-text { white-space: pre-wrap; }  /* 保留换行 */
+
+/* 用户气泡：右侧主色渐变 */
+.msg.user .bubble {
+  max-width: min(82%, 620px);
+  background: var(--grad);
+  color: #fff;
+  border-bottom-right-radius: 4px;   /* 小尾巴：非对称圆角 */
+  box-shadow: var(--shadow-pop);
+}
+/* 助手气泡：左侧浅色 */
+.msg.bot .bubble {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+  box-shadow: var(--shadow);
+}
+
+/* 出错气泡（fetch 失败提示） */
+.bubble.error {
+  background: #FFF1F0;
+  border-color: #FFD6D1;
+  color: #C0392B;
+}
+
+/* 用户气泡里的图片缩略图 */
+.msg .imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.msg .imgs img {
+  display: block;
+  max-width: 150px;
+  max-height: 110px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, .45);
+}
+
+/* 气泡底部元信息行：intent 徽章（左）+ 耗时（右） */
+.meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 7px;
+}
+.badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #EEF3FF;
+  color: var(--primary);
+  border: 1px solid #DCE7FF;
+}
+.lat { font-size: 11px; color: #9AA6B2; white-space: nowrap; }
+
+/* 来源列表 */
+.sources {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+}
+.src-label { color: var(--text-dim); margin-bottom: 3px; }
+.sources a {
+  display: block;
+  padding: 2px 0;
+  color: var(--primary);
+  text-decoration: none;
+}
+.sources a::before { content: "▪ "; color: #B9C4D6; }
+.sources a:hover { text-decoration: underline; }
+
+/* 打字中动画：三个跳动圆点 */
+.typing-bubble { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 14px; }
+.dots { display: inline-flex; gap: 4px; }
+.dots i {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #AEB9CB;
+  animation: blink 1.2s infinite ease-in-out;
+}
+.dots i:nth-child(2) { animation-delay: .15s; }
+.dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes blink {
+  0%, 80%, 100% { transform: translateY(0);    opacity: .4; }
+  40%           { transform: translateY(-4px); opacity: 1;  }
+}
+
+/* 居中系统小贴士（如"已清空 N 条对话"） */
+.tip {
+  align-self: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: #EDF0F7;
+  border-radius: 999px;
+  padding: 4px 14px;
+  animation: rise .2s ease both;
+}
+
+/* ---------- 输入区 ---------- */
+.composer {
+  flex-shrink: 0;
+  padding: 4px 12px calc(10px + env(safe-area-inset-bottom));
+}
+.composer-inner {
+  max-width: 860px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 6px 24px rgba(31, 41, 55, .08);
+  padding: 8px 10px;
+}
+
+/* 图片预览条 */
+.preview { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 4px 10px; }
+.preview[hidden] { display: none; }   /* 覆盖 display:flex，保证 hidden 生效 */
+.thumb {
+  position: relative;
+  width: 56px; height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb .x {
+  position: absolute; top: 3px; right: 3px;
+  width: 18px; height: 18px;
+  border: none; border-radius: 50%;
+  background: rgba(0, 0, 0, .55);
+  color: #fff; font-size: 12px; line-height: 18px;
+  text-align: center; cursor: pointer; padding: 0;
+}
+.thumb .x:hover { background: rgba(0, 0, 0, .75); }
+
+/* 输入行：附件按钮 + 文本域 + 发送按钮 */
+.input-row { display: flex; align-items: flex-end; gap: 6px; }
+.icon-btn {
+  flex-shrink: 0;
+  width: 38px; height: 38px;
+  border: none; border-radius: 12px;
+  background: transparent;
+  color: #6B7686;
+  display: grid; place-items: center;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.icon-btn:hover { background: #F0F3F9; color: var(--primary); }
+.icon-btn:active { transform: scale(.94); }
+textarea {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  /* 16px 防止 iOS 聚焦自动放大 */
+  font-size: 16px;
+  line-height: 22px;
+  padding: 8px 4px;
+  max-height: 132px;              /* 约 5 行 */
+  color: var(--text);
+}
+textarea::placeholder { color: #A6B0C0; }
+.send-btn {
+  flex-shrink: 0;
+  width: 40px; height: 40px;
+  border: none; border-radius: 50%;
+  background: var(--grad);
+  color: #fff;
+  display: grid; place-items: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(79, 140, 255, .35);
+  transition: transform .15s, opacity .15s, box-shadow .15s;
+}
+.send-btn:not(:disabled):hover { transform: translateY(-1px); }
+.send-btn:not(:disabled):active { transform: scale(.93); }
+.send-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+
+/* 输入框下方元信息行：语气选择 + 当前情绪 + 快捷键提示 */
+.composer-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 4px 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.meta-label { color: var(--text-dim); }
+select {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  max-width: 40vw;
+}
+select:focus { outline: none; border-color: var(--primary); }
+.emo-chip {
+  background: #F0F3FA;
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: #5A6474;
+}
+.emo-chip b { color: var(--primary); font-weight: 600; }
+.hint { margin-left: auto; color: #AEB8C8; }
+
+/* ---------- 响应式微调 ---------- */
+@media (min-width: 640px) {
+  .chat-inner { padding: 22px 16px 14px; gap: 16px; }
+  .bubble { font-size: 15px; }
+}
+/* 窄屏隐藏快捷键提示（移动端无实体键盘），并加大触控热区 */
+@media (max-width: 600px) {
+  .hint { display: none; }
+  .topbar-inner { padding: 10px 12px; }
+  .chat-inner { padding: 14px 10px 10px; }
+  .composer { padding-left: 8px; padding-right: 8px; }
+  select { padding: 6px 10px; }        /* 触控热区 ≥ 32px 高 */
+  .emo-chip { padding: 6px 12px; }
+  .icon-btn, .send-btn { width: 42px; height: 42px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== 顶栏：品牌 + 清空对话 ==================== -->
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <!-- Logo：内联 SVG，渐变圆形 + 字母 L -->
+      <span class="brand-logo" aria-hidden="true">
+        <svg width="40" height="40" viewBox="0 0 48 48">
+          <defs>
+            <linearGradient id="logoGradTop" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#4F8CFF"/>
+              <stop offset="1" stop-color="#8E6FFF"/>
+            </linearGradient>
+          </defs>
+          <circle cx="24" cy="24" r="24" fill="url(#logoGradTop)"/>
+          <text x="24" y="33" text-anchor="middle" font-size="25" font-weight="700"
+                fill="#FFFFFF" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">L</text>
+        </svg>
+      </span>
+      <div class="brand-text">
+        <h1>LoganLM</h1>
+        <p>罗根大模型 · 小罗 by 罗根</p>
+      </div>
+    </div>
+    <!-- 清空对话按钮：调用 POST /api/clear -->
+    <button id="clearBtn" class="clear-btn" type="button" title="清空当前会话的全部对话历史">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 6h18"/>
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+        <path d="M10 11v6M14 11v6"/>
+      </svg>
+      清空对话
+    </button>
+  </div>
+</header>
+
+<!-- ==================== 消息区 ==================== -->
+<main class="chat" id="chatScroll">
+  <div class="chat-inner" id="chatList" aria-live="polite"></div>
+</main>
+
+<!-- ==================== 输入区 ==================== -->
+<footer class="composer">
+  <div class="composer-inner">
+    <!-- 已选图片缩略图预览条 -->
+    <div class="preview" id="previewBar" hidden></div>
+
+    <div class="input-row">
+      <!-- 附件按钮：触发隐藏的 file input -->
+      <button id="attachBtn" class="icon-btn" type="button" title="发送图片">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="3"/>
+          <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/>
+          <path d="m21 15-5-5L5 21"/>
+        </svg>
+      </button>
+      <textarea id="inputBox" rows="1" placeholder="给小罗发消息…"
+                aria-label="消息输入框"></textarea>
+      <button id="sendBtn" class="send-btn" type="button" title="发送" aria-label="发送">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="composer-meta">
+      <label class="meta-label" for="emotionSelect">语气</label>
+      <!-- 语气下拉：选项来自 GET /api/emotions -->
+      <select id="emotionSelect" title="选择小罗的说话语气"></select>
+      <span class="emo-chip">当前：<b id="emotionChip">默认</b></span>
+      <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+    </div>
+  </div>
+</footer>
+
+<!-- 隐藏的图片选择控件（可多选） -->
+<input type="file" id="imageInput" accept="image/*" multiple hidden>
+
+<script>
+/* ==================================================================
+   LoganLM 聊天界面逻辑（纯原生 JS，无依赖）
+   后端契约：
+     POST /api/chat     {message, images[base64], session}
+                        -> {response, intent, sources, emotion, latency_ms, turns}
+     POST /api/clear    {session} -> {cleared: n}
+     GET  /api/emotions -> {emotions: [...]}
+   ================================================================== */
+(function () {
+  'use strict';
+
+  /* ---------------- 常量与状态 ---------------- */
+  var SESSION = 'default';                 // 会话固定为 default（后端持久化历史）
+  var API_CHAT = '/api/chat';
+  var API_CLEAR = '/api/clear';
+  var API_EMOTIONS = '/api/emotions';
+
+  // 欢迎语（页面加载 / 清空后展示）
+  var WELCOME_TEXT = '你好！我是小罗，罗根从零训练的 AI 助手。可以和我聊天、让我算数、查天气、搜新闻，也可以发图片给我看～';
+  // 网络异常提示语
+  var ERROR_TEXT = '网络请求失败，请确认服务已在本地启动。';
+  // /api/emotions 不可用时兜底的情绪列表（与后端默认一致）
+  var FALLBACK_EMOTIONS = ['自然', '开心', '温柔', '傲娇', '严肃', '撒娇', '冷静'];
+
+  // intent -> 角落小徽章文案
+  var INTENT_BADGE = {
+    chat: '🧠闲聊',
+    weather: '🌤天气',
+    search: '🔍搜索',
+    math: '🧮数学',
+    time: '🕐时间',
+    vision: '🖼识图',
+    emotion: '😊情绪',
+    memory: '💭记忆'
+  };
+
+  var sending = false;        // 是否正在等待回复（防止重复发送）
+  var pendingImages = [];     // 待发送图片 [{dataUrl, base64, name}]
+  var logoSeq = 0;            // Logo 渐变 id 自增计数，避免 DOM 内 id 重复
+
+  /* ---------------- DOM 引用 ---------------- */
+  var chatList = document.getElementById('chatList');
+  var input = document.getElementById('inputBox');
+  var sendBtn = document.getElementById('sendBtn');
+  var attachBtn = document.getElementById('attachBtn');
+  var fileInput = document.getElementById('imageInput');
+  var previewBar = document.getElementById('previewBar');
+  var emoSelect = document.getElementById('emotionSelect');
+  var emoChip = document.getElementById('emotionChip');
+  var clearBtn = document.getElementById('clearBtn');
+
+  /* ---------------- 工具函数 ---------------- */
+
+  // 快速创建带类名/文本的元素
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  // 新消息出现后平滑滚动到底部
+  function scrollBottom() {
+    requestAnimationFrame(function () {
+      var last = chatList.lastElementChild;
+      if (last && last.scrollIntoView) {
+        last.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }
+    });
+  }
+
+  // 耗时格式化：<1s 显示毫秒，否则显示秒
+  function fmtLatency(ms) {
+    var n = Number(ms);
+    if (!isFinite(n) || n < 0) return '';
+    return n < 1000 ? Math.round(n) + ' ms' : (n / 1000).toFixed(2) + ' s';
+  }
+
+  // 生成 Logo 小图的 SVG 字符串（每次使用独立渐变 id，避免重复 id 冲突）
+  function logoSVG(size) {
+    var id = 'loganGrad' + (++logoSeq);
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 48 48" aria-hidden="true">'
+      + '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">'
+      + '<stop offset="0" stop-color="#4F8CFF"/><stop offset="1" stop-color="#8E6FFF"/>'
+      + '</linearGradient></defs>'
+      + '<circle cx="24" cy="24" r="24" fill="url(#' + id + ')"/>'
+      + '<text x="24" y="33" text-anchor="middle" font-size="25" font-weight="700" fill="#FFFFFF" '
+      + 'font-family="-apple-system,\'PingFang SC\',\'Microsoft YaHei\',sans-serif">L</text>'
+      + '</svg>';
+  }
+
+  /* ---------------- 消息渲染 ---------------- */
+
+  // 居中系统小贴士
+  function addTip(text) {
+    var tip = el('div', 'tip', text);
+    chatList.appendChild(tip);
+    scrollBottom();
+  }
+
+  // 用户气泡：右侧渐变；text 为用户原文，dataUrls 为本地预览缩略图
+  function addUserMessage(text, dataUrls) {
+    var wrap = el('div', 'msg user');
+    var bubble = el('div', 'bubble');
+    if (text) {
+      bubble.appendChild(el('div', 'msg-text', text));  // textContent 赋值天然防 XSS
+    }
+    if (dataUrls && dataUrls.length) {
+      var box = el('div', 'imgs');
+      dataUrls.forEach(function (u) {
+        var img = document.createElement('img');
+        img.src = u;
+        img.alt = '发送的图片';
+        box.appendChild(img);
+      });
+      bubble.appendChild(box);
+    }
+    wrap.appendChild(bubble);
+    chatList.appendChild(wrap);
+    scrollBottom();
+  }
+
+  // 助手气泡：左侧浅色 + Logo 头像 + intent 徽章 + 来源列表 + 耗时
+  // opt: {text, intent, sources, latencyMs, turns, isError}
+  function addAssistantMessage(opt) {
+    opt = opt || {};
+    var wrap = el('div', 'msg bot');
+
+    // 头像（Logo 小图）
+    var avatar = el('div', 'avatar');
+    avatar.innerHTML = logoSVG(32);
+    wrap.appendChild(avatar);
+
+    // 气泡主体
+    var bubble = el('div', 'bubble' + (opt.isError ? ' error' : ''));
+    bubble.appendChild(el('div', 'msg-text', opt.text || ''));
+
+    // 来源列表（非空才渲染），来源格式：["标题", "网址"]
+    if (Array.isArray(opt.sources) && opt.sources.length) {
+      var srcBox = el('div', 'sources');
+      srcBox.appendChild(el('div', 'src-label', '来源：'));
+      var count = 0;
+      opt.sources.forEach(function (s) {
+        if (!Array.isArray(s) || !s[1]) return;
+        var a = document.createElement('a');
+        a.href = s[1];
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';   // 安全：隔离打开的第三方页面
+        a.textContent = s[0] || s[1];
+        srcBox.appendChild(a);
+        count++;
+      });
+      if (count) bubble.appendChild(srcBox);
+    }
+
+    // 底部元信息：intent 徽章（左） + 耗时/轮次（右）
+    var badgeText = INTENT_BADGE[opt.intent] || (opt.intent ? '🏷' + opt.intent : '');
+    var latText = fmtLatency(opt.latencyMs);
+    if (opt.turns != null && latText) latText += ' · 第 ' + opt.turns + ' 轮';
+    if (badgeText || latText) {
+      var meta = el('div', 'meta');
+      if (badgeText) meta.appendChild(el('span', 'badge', badgeText));
+      if (latText) meta.appendChild(el('span', 'lat', latText));
+      bubble.appendChild(meta);
+    }
+
+    wrap.appendChild(bubble);
+    chatList.appendChild(wrap);
+    scrollBottom();
+  }
+
+  // 打字中动画气泡（三个跳动圆点），返回节点便于完成后移除
+  function addTyping() {
+    var wrap = el('div', 'msg bot');
+    var avatar = el('div', 'avatar');
+    avatar.innerHTML = logoSVG(32);
+    var bubble = el('div', 'bubble typing-bubble');
+    bubble.setAttribute('aria-label', '小罗正在思考…');
+    bubble.innerHTML = '<span>小罗正在思考</span>'
+      + '<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+    wrap.appendChild(avatar);
+    wrap.appendChild(bubble);
+    chatList.appendChild(wrap);
+    scrollBottom();
+    return wrap;
+  }
+
+  // 欢迎消息
+  function addWelcome() {
+    addAssistantMessage({ text: WELCOME_TEXT });
+  }
+
+  /* ---------------- 图片选择与预览 ---------------- */
+
+  // 渲染预览条（可单张删除）
+  function renderPreview() {
+    previewBar.innerHTML = '';
+    previewBar.hidden = pendingImages.length === 0;
+    pendingImages.forEach(function (p, idx) {
+      var box = el('div', 'thumb');
+      var img = document.createElement('img');
+      img.src = p.dataUrl;
+      img.alt = p.name || '预览图';
+      var x = el('button', 'x', '×');
+      x.type = 'button';
+      x.title = '移除这张图';
+      x.setAttribute('aria-label', '移除图片');
+      x.addEventListener('click', function () {
+        pendingImages.splice(idx, 1);
+        renderPreview();
+      });
+      box.appendChild(img);
+      box.appendChild(x);
+      previewBar.appendChild(box);
+    });
+  }
+
+  // 选择文件后逐个读取为 dataURL，并剥掉 data:image/...;base64, 前缀
+  fileInput.addEventListener('change', function () {
+    Array.prototype.slice.call(fileInput.files || []).forEach(function (file) {
+      if (!file.type || file.type.indexOf('image/') !== 0) return;  // 只收图片
+      var reader = new FileReader();
+      reader.onload = function () {
+        var dataUrl = String(reader.result || '');
+        var base64 = dataUrl.indexOf(',') >= 0 ? dataUrl.slice(dataUrl.indexOf(',') + 1) : dataUrl;
+        pendingImages.push({ dataUrl: dataUrl, base64: base64, name: file.name });
+        renderPreview();
+      };
+      reader.readAsDataURL(file);
+    });
+    fileInput.value = '';   // 清空 value，允许再次选择同一文件
+  });
+
+  attachBtn.addEventListener('click', function () { fileInput.click(); });
+
+  /* ---------------- 情绪下拉 ---------------- */
+
+  // 拉取情绪风格列表填充下拉框（失败时用内置兜底列表）
+  function loadEmotions() {
+    var xhr = new XMLHttpRequest();   // 用 XHR 同步错误处理也简单，这里异步即可
+    xhr.open('GET', API_EMOTIONS, true);
+    xhr.onload = function () {
+      var list = FALLBACK_EMOTIONS;
+      try {
+        if (xhr.status === 200) {
+          var data = JSON.parse(xhr.responseText);
+          if (data && Array.isArray(data.emotions) && data.emotions.length) {
+            list = data.emotions;
+          }
+        }
+      } catch (e) { /* 解析失败走兜底 */ }
+      fillEmotionOptions(list);
+    };
+    xhr.onerror = function () { fillEmotionOptions(FALLBACK_EMOTIONS); };
+    xhr.send();
+  }
+
+  function fillEmotionOptions(list) {
+    var current = emoSelect.value;    // 刷新时保留已选项
+    emoSelect.innerHTML = '';
+    // 首项为"默认语气"（value 为空 = 不附加情绪前缀）
+    emoSelect.appendChild(new Option('默认语气', ''));
+    list.forEach(function (name) {
+      if (typeof name === 'string' && name) emoSelect.appendChild(new Option(name, name));
+    });
+    if (current && Array.prototype.some.call(emoSelect.options, function (o) { return o.value === current; })) {
+      emoSelect.value = current;
+    }
+    syncEmotionChip();
+  }
+
+  // 旁边的小徽章同步显示"当前情绪"
+  function syncEmotionChip() {
+    emoChip.textContent = emoSelect.value || '默认';
+  }
+  emoSelect.addEventListener('change', syncEmotionChip);
+
+  /* ---------------- 发送逻辑 ---------------- */
+
+  function send() {
+    if (sending) return;                          // 正在等待回复，忽略
+    var raw = input.value.trim();
+    var hasText = raw.length > 0;
+    var imgs = pendingImages.slice();
+    if (!hasText && imgs.length === 0) return;    // 空消息不发送
+
+    // 组装实际发给后端的 message：选了语气则自动加"用XX的语气回答"前缀
+    var emo = emoSelect.value;
+    var message;
+    if (emo && hasText) {
+      message = '用' + emo + '的语气回答：' + raw;
+    } else if (emo && !hasText && imgs.length) {
+      message = '用' + emo + '的语气回答，帮我看看这些图片';
+    } else if (!hasText && imgs.length) {
+      message = '帮我看看这些图片';
+    } else {
+      message = raw;
+    }
+
+    // 用户气泡只展示用户输入的原文 + 图片缩略图（前缀是内部机制）
+    addUserMessage(raw, imgs.map(function (p) { return p.dataUrl; }));
+
+    // 清空输入区与预览条
+    input.value = '';
+    autoresize();
+    pendingImages = [];
+    renderPreview();
+
+    // 进入"发送中"状态：禁用按钮 + 打字动画
+    sending = true;
+    sendBtn.disabled = true;
+    var typing = addTyping();
+
+    fetch(API_CHAT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: message,                          // 用户文本（含情绪前缀）
+        images: imgs.map(function (p) { return p.base64; }),  // 纯 base64，不含 data: 前缀
+        session: SESSION                           // 固定 default，后端持久化历史
+      })
+    })
+      .then(function (resp) {
+        if (!resp.ok) {
+          // HTTP 层错误（如 503 模型未加载）：尝试读出后端 error 字段
+          return resp.json().catch(function () { return {}; }).then(function (data) {
+            throw new Error((data && data.error) ? String(data.error) : 'HTTP ' + resp.status);
+          });
+        }
+        return resp.json();
+      })
+      .then(function (data) {
+        if (typing.parentNode) typing.parentNode.removeChild(typing);
+        addAssistantMessage({
+          text: (data && data.response) || '（小罗这次没有说话，再试一次吧）',
+          intent: data && data.intent,
+          sources: data && data.sources,
+          latencyMs: data && data.latency_ms,
+          turns: data && data.turns
+        });
+        // 同步后端返回的"当前情绪风格"到徽章与下拉框
+        var em = data && data.emotion;
+        if (typeof em === 'string' && em) {
+          emoChip.textContent = em;
+          var has = Array.prototype.some.call(emoSelect.options, function (o) { return o.value === em; });
+          if (has) emoSelect.value = em;
+        }
+      })
+      .catch(function () {
+        // fetch 网络层失败：友好提示气泡
+        if (typing.parentNode) typing.parentNode.removeChild(typing);
+        addAssistantMessage({ text: ERROR_TEXT, isError: true });
+      })
+      .then(function () {
+        // finally：恢复状态（用 .then 链兼容旧浏览器，无 finally 依赖）
+        sending = false;
+        sendBtn.disabled = false;
+        scrollBottom();
+        if (window.innerWidth > 768) input.focus();  // 移动端不自动聚焦以免弹出键盘
+      });
+  }
+
+  sendBtn.addEventListener('click', send);
+
+  /* ---------------- 清空对话 ---------------- */
+
+  clearBtn.addEventListener('click', function () {
+    if (clearBtn.disabled || sending) return;
+    clearBtn.disabled = true;
+    fetch(API_CLEAR, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: SESSION })
+    })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.json();
+      })
+      .then(function (data) {
+        // 清空本地消息区并重新展示欢迎语
+        chatList.innerHTML = '';
+        addWelcome();
+        if (data && typeof data.cleared === 'number') {
+          addTip('已清空 ' + data.cleared + ' 条对话记录');
+        } else {
+          addTip('对话已清空');
+        }
+      })
+      .catch(function () {
+        addAssistantMessage({ text: ERROR_TEXT, isError: true });
+      })
+      .then(function () {
+        clearBtn.disabled = false;
+        scrollBottom();
+      });
+  });
+
+  /* ---------------- 输入框行为 ---------------- */
+
+  // textarea 自适应高度：1 ~ 5 行
+  var LINE_H = 22;        // 与 CSS line-height 一致
+  var MAX_H = 132;        // 5 行上限（22px 行高 × 5 + 上下内边距 16px + 余量 4px），与 CSS max-height 同步
+  function autoresize() {
+    input.style.height = 'auto';                    // 先缩回，取真实内容高度
+    var h = Math.min(input.scrollHeight, MAX_H);
+    input.style.height = h + 'px';
+    input.style.overflowY = input.scrollHeight > MAX_H ? 'auto' : 'hidden';
+  }
+  input.addEventListener('input', autoresize);
+
+  // Enter 发送 / Shift+Enter 换行；中文输入法组词期间的回车不触发发送
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.isComposing || e.keyCode === 229) return;   // IME 组合中
+      e.preventDefault();
+      send();
+    }
+  });
+
+  /* ---------------- 初始化 ---------------- */
+  addWelcome();       // 欢迎气泡
+  loadEmotions();     // 拉取情绪风格列表
+  autoresize();       // 初始化输入框高度
+  if (window.innerWidth > 768) input.focus();   // 桌面端自动聚焦
+})();
+</script>
+</body>
+</html>

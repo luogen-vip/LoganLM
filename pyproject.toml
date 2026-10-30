@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loganlm"
+version = "1.0.0"
+description = "LoganLM —— 罗根从零手写的多模态大语言模型（BPE 分词器 + Transformer LLM + ViT 视觉 + 联网搜索 + 上下文记忆 + 情绪引擎）"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "罗根 (Logan)" }]
+keywords = ["llm", "transformer", "from-scratch", "multimodal", "bpe", "chinese"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.24",
+    "pillow>=9.0",
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["loganlm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
